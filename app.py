@@ -1,134 +1,166 @@
-import jwt
 from flask import Flask, request, jsonify
+from models import db, Product, Cart, CartItem
 
-from datetime import datetime, timedelta
-
-JWT_SECRET = "d3fb12750c2eff92120742e1b334479e"
 app = Flask(__name__)
-"""
-cart = [{
-    'id': "je8zng",
-    'quantity': 3
-}]
 
-def check_fields(body, fields):
-    # On récupère les champs requis au format 'ensemble'
-    required_parameters_set = set(fields)
-    # On récupère les champs du corps de la requête au format 'ensemble'
-    fields_set = set(body.keys())
-    # Si l'ensemble des champs requis n'est pas inclut dans l'ensemble des champs du corps de la requête
-    # Alors s'il manque des paramètres et la valeur False sera renvoyée
-    return required_parameters_set <= fields_set
+# Configuration de la base de données
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///cart.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-@app.route('/')
-def hello_world():
-    return "Coucou !"
+# Initialisation de l'extension SQLAlchemy avec notre application
+db.init_app(app)
 
+# Création des tables au démarrage de l'application
+@app.before_request
+def create_tables():
+    app.before_request_funcs[None].remove(create_tables)
+    
+    db.create_all()
+
+# Ajout de quelques produits pour tester
+@app.before_request
+def add_sample_data():
+    app.before_request_funcs[None].remove(add_sample_data)
+    
+    # Vérifier si des produits existent déjà
+    if Product.query.count() == 0:
+        products = [
+            Product(id='je8zng', name='Smartphone Ultra', description='Smartphone pliable', price=799.99, stock=50),
+            Product(id='ab9h2p', name='Casque Bluetooth', description='Audio haute qualité', price=129.99, stock=30),
+            Product(id='cd5j7k', name='Livre Python', description='Apprendre Python en profondeur', price=39.99, stock=100)
+        ]
+        db.session.add_all(products)
+        
+        # Créer un panier vide
+        cart = Cart()
+        db.session.add(cart)
+        
+        db.session.commit()
+
+# Récupérer le contenu du panier
 @app.route('/cart', methods=['GET'])
 def list_cart():
-    return jsonify(cart), 200
+    # On récupère le premier panier (dans une vraie application, on identifierait le panier par utilisateur)
+    cart = Cart.query.first()
+    if not cart:
+        # Si aucun panier n'existe, on en crée un
+        cart = Cart()
+        db.session.add(cart)
+        db.session.commit()
+    
+    # On prépare la liste des produits dans le panier
+    items = []
+    for item in cart.items:
+        product = Product.query.get(item.product_id)
+        items.append({
+            'id': item.product_id,
+            'name': product.name,
+            'price': product.price,
+            'quantity': item.quantity
+        })
+    
+    return jsonify(items), 200
 
+# Ajouter un produit au panier
 @app.route('/cart', methods=['POST'])
 def add_to_cart():
     try:
         body = request.get_json()
-        if not check_fields(body, {'id', 'quantity'}):
-            # S'il manque un paramètre on retourne une erreur 400
-            return jsonify({'error': "Missing fields."}), 400
         
-        # On vérifie si le produit n'existe pas déjà
-        for i, item in enumerate(cart):
-            if item['id'] == body.get('id', ""):
-                # On a retrouvé ce produit dans le panier, on ajoute à la quantité existante
-                cart[i]['quantity'] += int(body.get('quantity', 0))
-                # On retourne un code 200 pour signaler que tout s'est bien passé
-                return jsonify({}), 200
-            
-         # Si l'on atteint cette partie, alors le produit n'existait pas déjà
-        cart.append(body)
+        # Vérifier les champs requis
+        if 'id' not in body or 'quantity' not in body:
+            return jsonify({'error': 'Champs manquants (id ou quantity)'}), 400
+        
+        # Vérifier si le produit existe
+        product = Product.query.get(body['id'])
+        if not product:
+            return jsonify({'error': 'Produit non trouvé'}), 404
+        
+        # Récupérer le panier actuel ou en créer un nouveau
+        cart = Cart.query.first()
+        if not cart:
+            cart = Cart()
+            db.session.add(cart)
+            db.session.commit()
+        
+        # Vérifier si le produit est déjà dans le panier
+        cart_item = CartItem.query.filter_by(cart_id=cart.id, product_id=body['id']).first()
+        
+        if cart_item:
+            # Mettre à jour la quantité
+            cart_item.quantity += int(body['quantity'])
+        else:
+            # Ajouter un nouvel élément au panier
+            cart_item = CartItem(
+                cart_id=cart.id,
+                product_id=body['id'],
+                quantity=int(body['quantity'])
+            )
+            db.session.add(cart_item)
+        
+        db.session.commit()
         return jsonify({}), 200
+    
     except Exception as e:
+        db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
+# Modifier la quantité d'un produit dans le panier
 @app.route('/cart', methods=['PATCH'])
 def edit_cart():
     try:
         body = request.get_json()
-        if not check_fields(body, {'id', 'quantity'}):
-            # S'il manque un paramètre on retourne une erreur 400
-            return jsonify({'error': "Missing fields."}), 400
-
-        for i, item in enumerate(cart):
-            if item['id'] == body.get('id', ""):
-                # On met à jour la quantité
-                cart[i]['quantity'] = int(body.get('quantity', 0))
-                return jsonify({}), 200
         
-        # Si l'on atteint cette partie, alors le produit n'existait pas : on ne peut pas mettre à jour !
-        return jsonify({'error': "Product not found."}), 404
+        # Vérifier les champs requis
+        if 'id' not in body or 'quantity' not in body:
+            return jsonify({'error': 'Champs manquants (id ou quantity)'}), 400
+        
+        # Récupérer le panier actuel
+        cart = Cart.query.first()
+        if not cart:
+            return jsonify({'error': 'Panier non trouvé'}), 404
+        
+        # Trouver l'élément dans le panier
+        cart_item = CartItem.query.filter_by(cart_id=cart.id, product_id=body['id']).first()
+        if not cart_item:
+            return jsonify({'error': 'Produit non trouvé dans le panier'}), 404
+        
+        # Mettre à jour la quantité
+        cart_item.quantity = int(body['quantity'])
+        db.session.commit()
+        
+        return jsonify({}), 200
+    
     except Exception as e:
+        db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
+# Supprimer un produit du panier
 @app.route('/cart', methods=['DELETE'])
 def remove_from_cart():
     try:
         body = request.get_json()
-        if not check_fields(body, {'id'}):
-            # S'il manque un paramètre on retourne une erreur 400
-            return jsonify({'error': "Missing fields."}), 400
         
-        for i, item in enumerate(cart):
-            if item['id'] == body['id']:
-                # On supprime le produit du panier
-                del cart[i]
-                return jsonify({}), 200
-            
-        # Si l'on atteint cette partie, alors le produit n'existait pas : on ne peut pas supprimer !
-        return jsonify({'error': "Product not found."}), 404
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        # Vérifier les champs requis
+        if 'id' not in body:
+            return jsonify({'error': 'Champ id manquant'}), 400
+        
+        # Récupérer le panier actuel
+        cart = Cart.query.first()
+        if not cart:
+            return jsonify({'error': 'Panier non trouvé'}), 404
+        
+        # Trouver l'élément dans le panier
+        cart_item = CartItem.query.filter_by(cart_id=cart.id, product_id=body['id']).first()
+        if not cart_item:
+            return jsonify({'error': 'Produit non trouvé dans le panier'}), 404
+        
+        # Supprimer l'élément du panier
+        db.session.delete(cart_item)
+        db.session.commit()
+        
+        return jsonify({}), 200
     
-    """
-def decode_token(token):
-    try:
-        return jwt.decode(
-            token,
-            JWT_SECRET,
-            algorithms="HS256"
-        )
-    except Exception:
-        print("Jeton JWT invalide.")
-        return
-
-def require_authentication(f):
-    def wrapper(**kwargs):
-        token = request.headers.get("Authorization", "0")
-        if not decode_token(token):
-            return {"error": "Jeton d'accès invalide."}, 401
-        return f(**kwargs)
-    return wrapper
-
-@app.route('/')
-def hello_world():
-    return "Coucou !"
-
-@app.route('/auth', methods=["POST"])
-def generate_token():
-    body = request.get_json()
-    if body and body.get("password", "") == "blent":
-        token = jwt.encode(
-            {
-                "exp": datetime.utcnow() + timedelta(hours=1),
-                "user": "blentie"
-            },
-            JWT_SECRET,
-            algorithm="HS256"
-        )
-        return jsonify({"token": token}), 200
-    else:
-        return jsonify({"error": "Mot de passe invalide."}), 401
-
-@app.route('/predict', methods=["GET"])
-@require_authentication
-def predict():
-    return {"message": "Ok !"}, 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500

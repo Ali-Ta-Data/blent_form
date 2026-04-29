@@ -1,33 +1,22 @@
-import json
 import requests
+import json
 
-"""requests.post("http://127.0.0.1:5000/cart", json={
-    'id': "je8zng",
-    'quantity': 1
-})
-requests.post("http://127.0.0.1:5000/cart", json={
-    'id': "je8zng",
-    'quantity': 2
-})
+def print_response(response):
+    print(f"Status: {response.status_code}")
+    print("Response:", json.dumps(response.json(), indent=2))
 
-req = requests.patch("http://127.0.0.1:5000/cart", json={
-    'id': "je8zng",
-    'quantity': 10
-})
+"""print("Ajout d'un smartphone au panier :")
+response = requests.post(
+    "http://127.0.0.1:5000/cart",
+    json={"id": "je8zng", "quantity": 2}
+)
+print_response(response)
 
-print(requests.get("http://127.0.0.1:5000/cart").json())
-
-req = requests.delete("http://127.0.0.1:5000/cart", json={
-    'id': "je8zng"
-})
-
-print(req.status_code, req.json())
-print(requests.get("http://127.0.0.1:5000/cart").json())
-print("Fin")"""
+print("\nContenu du panier après ajout :")
+response = requests.get("http://127.0.0.1:5000/cart")
+print_response(response)"""
 
 
-rep = requests.post("http://127.0.0.1:5000/auth", json={"password": "blent"})
-my_token = json.loads(rep.content)["token"]
-
-rep = requests.get("http://127.0.0.1:5000/predict", headers={"Authorization": "test"})
-print(rep.status_code, json.loads(rep.content))
+print("Contenu du panier :")
+response = requests.get("http://127.0.0.1:5000/cart")
+print_response(response)
