@@ -22,3 +22,4 @@ req = requests.delete("http://127.0.0.1:5000/cart", json={
 
 print(req.status_code, req.json())
 print(requests.get("http://127.0.0.1:5000/cart").json())
+print("Fin")
